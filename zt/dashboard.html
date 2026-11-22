@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Zero-Trust Microservices Lab - live dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f141a; --panel:#18202a; --line:#2a3644; --text:#dbe4ee; --mute:#8696a8; --ok:#3fb950; --bad:#f85149; --warn:#d29922; --blue:#58a6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { padding:14px 22px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; } .sub { color:var(--mute); }
+  main { padding:18px 22px; display:grid; gap:18px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .card h3 { margin:0 0 6px; font-size:15px; display:flex; justify-content:space-between; align-items:center; }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-size:12px; color:var(--mute); word-break:break-all; }
+  .pill { font-size:11px; padding:1px 8px; border-radius:10px; border:1px solid currentColor; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .blue { color:var(--blue); }
+  .bar { height:5px; background:var(--line); border-radius:3px; margin:8px 0 2px; overflow:hidden; }
+  .bar > div { height:100%; background:var(--blue); transition:width .4s linear; }
+  .counters { display:flex; gap:26px; flex-wrap:wrap; } .counters b { display:block; font-size:24px; }
+  table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--mute); font-weight:600; font-size:12px; } td.t { color:var(--mute); white-space:nowrap; }
+  .scroll { max-height:52vh; overflow:auto; }
+  .tag { font-weight:700; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zero-Trust Microservices Lab</h1>
+  <span class="sub">Never trust, always verify. Live view of identities, decisions and alerts.</span>
+</header>
+<main>
+  <section class="card counters">
+    <div><span class="sub">Requests allowed</span><b class="ok" id="c-allow">0</b></div>
+    <div><span class="sub">Requests denied</span><b class="bad" id="c-deny">0</b></div>
+    <div><span class="sub">TLS handshakes rejected</span><b class="warn" id="c-hs">0</b></div>
+    <div><span class="sub">Runtime alerts</span><b class="bad" id="c-alert">0</b></div>
+    <div><span class="sub">Identity rotations</span><b class="blue" id="c-rot">0</b></div>
+  </section>
+  <section>
+    <h2 style="font-size:15px">Workloads and their short-lived identities (SVID)</h2>
+    <div class="cards" id="services"></div>
+  </section>
+  <section>
+    <h2 style="font-size:15px">Live event stream</h2>
+    <div class="card scroll"><table>
+      <thead><tr><th>Time</th><th>Service</th><th>Event</th><th>Details</th></tr></thead>
+      <tbody id="events"></tbody></table></div>
+  </section>
+</main>
+<script>
+  let next = 0, ttl = 30; const counts = {allow:0, deny:0, hs:0, alert:0, rot:0};
+  const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  function row(e) {
+    const t = new Date(e.ts * 1000).toLocaleTimeString();
+    let tag = e.kind, cls = 'blue', det = '';
+    if (e.kind === 'decision') {
+      cls = e.allowed ? 'ok' : 'bad'; tag = e.allowed ? 'ALLOW' : 'DENY';
+      det = `${esc(e.caller)} &rarr; ${esc(e.method)} ${esc(e.path)} <span class="sub">(${esc(e.reason)})</span>`;
+      e.allowed ? counts.allow++ : counts.deny++;
+    } else if (e.kind === 'authn') {
+      cls = 'bad'; tag = 'JWT REJECTED'; det = `${esc(e.method)} ${esc(e.path)}: ${esc(e.reason)}`; counts.deny++;
+    } else if (e.kind === 'handshake') {
+      cls = 'warn'; tag = 'TLS REJECTED'; det = esc(e.detail) + ' <span class="sub">(' + esc(e.reason) + ')</span>'; counts.hs++;
+    } else if (e.kind === 'alert') {
+      cls = 'bad'; tag = 'ALERT ' + e.priority; det = `<b>${esc(e.rule)}</b> ${esc(e.detail)} <span class="sub">${esc(e.mitre)}</span>`; counts.alert++;
+    } else if (e.kind === 'response') {
+      cls = 'warn'; tag = 'RESPONSE'; det = esc(e.action) + ': ' + esc(e.detail);
+    } else if (e.kind === 'identity') {
+      cls = e.event === 'rotated' ? 'blue' : (e.event === 'issued' ? 'ok' : 'warn'); tag = 'IDENTITY ' + String(e.event).toUpperCase();
+      det = esc(e.spiffe_id || e.workload || '') + (e.serial ? ' serial ' + esc(e.serial) : '') + (e.reason ? ' ' + esc(e.reason) : '');
+      if (e.event === 'rotated') counts.rot++;
+    } else { det = esc(e.event || '') + ' ' + esc(e.detail || e.spiffe_id || ''); }
+    return `<tr><td class="t">${t}</td><td>${esc(e.service)}</td><td class="tag ${cls}">${tag}</td><td>${det}</td></tr>`;
+  }
+  async function pollEvents() {
+    try {
+      const r = await (await fetch('/api/events?since=' + next)).json();
+      next = r.next;
+      if (r.events.length) {
+        const body = document.getElementById('events');
+        body.insertAdjacentHTML('afterbegin', r.events.map(row).reverse().join(''));
+        while (body.children.length > 400) body.lastChild.remove();
+        document.getElementById('c-allow').textContent = counts.allow;
+        document.getElementById('c-deny').textContent = counts.deny;
+        document.getElementById('c-hs').textContent = counts.hs;
+        document.getElementById('c-alert').textContent = counts.alert;
+        document.getElementById('c-rot').textContent = counts.rot;
+      }
+    } catch (e) {}
+  }
+  async function pollStatus() {
+    try {
+      const r = await (await fetch('/api/status')).json(); ttl = r.ttl;
+      document.getElementById('services').innerHTML = r.services.map(s => {
+        if (s.down) return `<div class="card"><h3>${esc(s.name)} <span class="pill bad">down</span></h3></div>`;
+        const left = Math.max(0, s.not_after - r.now), pct = Math.min(100, left / (ttl + 5) * 100);
+        const q = s.quarantined ? '<span class="pill bad">QUARANTINED</span>' : '<span class="pill ok">healthy</span>';
+        return `<div class="card"><h3>${esc(s.name)} ${q}</h3>
+          <div class="mono">${esc(s.spiffe_id)}</div>
+          <div class="bar"><div style="width:${pct}%"></div></div>
+          <div class="mono">certificate ${esc(String(s.serial).slice(0,12))} expires in ${left.toFixed(0)} s</div>
+          <div class="mono">allowed ${s.stats.allowed} / denied ${s.stats.denied} / handshakes rejected ${s.stats.handshake_rejected}</div></div>`;
+      }).join('');
+    } catch (e) {}
+  }
+  setInterval(pollEvents, 700); setInterval(pollStatus, 1000); pollEvents(); pollStatus();
+</script>
+</body>
+</html>

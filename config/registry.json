@@ -1,0 +1,11 @@
+{
+  "trust_domain": "cluster.local",
+  "comment": "Registration entries of the certificate authority (report Section 3.11). A workload that is not listed here can never obtain an identity.",
+  "entries": [
+    {"workload": "gateway",  "spiffe_id": "spiffe://cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"},
+    {"workload": "api",      "spiffe_id": "spiffe://cluster.local/ns/url-shortener/sa/fastapi-sa"},
+    {"workload": "cache",    "spiffe_id": "spiffe://cluster.local/ns/url-shortener/sa/redis-sa"},
+    {"workload": "db",       "spiffe_id": "spiffe://cluster.local/ns/url-shortener/sa/postgres-sa"},
+    {"workload": "attacker", "spiffe_id": "spiffe://cluster.local/ns/attacker/sa/fastapi-sa"}
+  ]
+}

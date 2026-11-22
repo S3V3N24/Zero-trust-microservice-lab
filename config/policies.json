@@ -1,0 +1,50 @@
+{
+  "comment": "Istio-style authorization policies (report Sections 4.6.3, 4.10, 4.11). Evaluation order: DENY, then ALLOW, default deny.",
+  "policies": [
+    {
+      "name": "deny-all",
+      "selector": "*",
+      "action": "ALLOW",
+      "rules": []
+    },
+    {
+      "name": "gateway-no-delete",
+      "selector": "gateway",
+      "action": "DENY",
+      "rules": [{"methods": ["DELETE"]}]
+    },
+    {
+      "name": "gateway-authz",
+      "selector": "gateway",
+      "action": "ALLOW",
+      "rules": [
+        {"methods": ["GET"], "not_paths": ["/shorten"]},
+        {"methods": ["POST"], "paths": ["/shorten"], "require_user": true, "roles": ["shortener-user"]}
+      ]
+    },
+    {
+      "name": "api-from-gateway",
+      "selector": "api",
+      "action": "ALLOW",
+      "rules": [{"principals": ["spiffe://cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]}]
+    },
+    {
+      "name": "api-internal-only-self",
+      "selector": "api",
+      "action": "DENY",
+      "rules": [{"paths": ["/internal/*"], "not_principals": ["spiffe://cluster.local/ns/url-shortener/sa/fastapi-sa"]}]
+    },
+    {
+      "name": "cache-from-api",
+      "selector": "cache",
+      "action": "ALLOW",
+      "rules": [{"principals": ["spiffe://cluster.local/ns/url-shortener/sa/fastapi-sa"], "methods": ["GET", "PUT"], "paths": ["/kv/*"]}]
+    },
+    {
+      "name": "db-from-api",
+      "selector": "db",
+      "action": "ALLOW",
+      "rules": [{"principals": ["spiffe://cluster.local/ns/url-shortener/sa/fastapi-sa"], "methods": ["GET", "POST"], "paths": ["/urls", "/urls/*"]}]
+    }
+  ]
+}
